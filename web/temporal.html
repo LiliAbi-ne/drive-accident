@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ATUS 2020 · Análisis temporal</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>ATUS 2020 · Análisis temporal</h1>
+        <p class="subtitle" id="temporal-subtitle">Días y horas con más accidentes</p>
+      </div>
+      <nav class="navbar">
+        <a class="nav-link" href="/">Explorador</a>
+        <a class="nav-link" href="/#resumen">Resumen</a>
+        <a class="nav-link" href="/heatmap">Mapa de calor</a>
+        <a class="nav-link is-active" href="/temporal" aria-current="page">Temporal</a>
+      </nav>
+      <nav class="topbar-actions">
+        <span id="status" class="status" data-state="loading">Cargando…</span>
+      </nav>
+    </header>
+
+    <main class="temporal-page">
+      <section class="card">
+        <h2 class="card-title">Por día de la semana</h2>
+        <div class="bars" id="day-bars"></div>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">Por hora del día</h2>
+        <div class="bars bars--hour" id="hour-bars"></div>
+      </section>
+
+      <section class="card card--wide">
+        <h2 class="card-title">Día × hora</h2>
+        <div class="matrix-wrap">
+          <div class="matrix" id="matrix"></div>
+        </div>
+        <div class="heat-legend heat-legend--static">
+          <span class="heat-legend__label">Menos</span>
+          <span class="heat-legend__bar"></span>
+          <span class="heat-legend__label">Más</span>
+        </div>
+      </section>
+    </main>
+
+    <script src="/temporal.js" type="module"></script>
+  </body>
+</html>
