@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ATUS 2020 · Explorador de accidentes</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>ATUS 2020 · Explorador de accidentes</h1>
+        <p class="subtitle">Primer registro de la base municipal georreferenciada</p>
+      </div>
+      <span id="status" class="status" data-state="loading">Cargando…</span>
+    </header>
+
+    <main class="layout">
+      <div id="map" class="map" aria-label="Mapa del accidente"></div>
+
+      <aside class="panel" id="panel" aria-live="polite">
+        <p class="placeholder">Leyendo el primer registro del CSV…</p>
+      </aside>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="app.js" type="module"></script>
+  </body>
+</html>
