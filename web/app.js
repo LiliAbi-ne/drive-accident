@@ -9,7 +9,26 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
 }).addTo(map);
 
 const statusEl = document.getElementById("status");
-const panelEl = document.getElementById("panel");
+const detailViewEl = document.getElementById("view-detail");
+const summaryViewEl = document.getElementById("view-summary");
+const summaryTableEl = document.getElementById("summary-table");
+const yearFilterEl = document.getElementById("year-filter");
+const tabEls = document.querySelectorAll(".tab");
+
+const SUMMARY_COLUMNS = [
+  { key: "state_name", label: "Estado", numeric: false },
+  { key: "year", label: "Año", numeric: true },
+  { key: "accidents", label: "Accidentes", numeric: true },
+  { key: "deaths", label: "Muertos", numeric: true },
+  { key: "injured", label: "Heridos", numeric: true },
+];
+
+const summaryState = {
+  rows: [],
+  year: "all",
+  sortKey: "accidents",
+  sortDir: -1,
+};
 
 function setStatus(text, state) {
   statusEl.textContent = text;
@@ -34,6 +53,19 @@ function section(title) {
   el.className = "section-title";
   el.textContent = title;
   return el;
+}
+
+function metric(label, value) {
+  const box = document.createElement("div");
+  box.className = "metric";
+  const num = document.createElement("span");
+  num.className = "metric-value";
+  num.textContent = String(value);
+  const name = document.createElement("span");
+  name.className = "metric-label";
+  name.textContent = label;
+  box.append(num, name);
+  return box;
 }
 
 function formatDateTime(accident) {
@@ -62,7 +94,7 @@ function buildPopup(accident) {
 }
 
 function renderPanel(accident) {
-  panelEl.replaceChildren();
+  detailViewEl.replaceChildren();
 
   const header = document.createElement("div");
   header.className = "panel-header";
@@ -102,29 +134,190 @@ function renderPanel(accident) {
   note.textContent =
     "Coordenada geocodificada por INEGI a partir de la dirección (no es GPS). El círculo marca la incertidumbre aproximada.";
 
-  panelEl.append(header, severityBlock, section("Detalle del registro"), details, note);
-}
-
-function metric(label, value) {
-  const box = document.createElement("div");
-  box.className = "metric";
-  const num = document.createElement("span");
-  num.className = "metric-value";
-  num.textContent = String(value);
-  const name = document.createElement("span");
-  name.className = "metric-label";
-  name.textContent = label;
-  box.append(num, name);
-  return box;
+  detailViewEl.append(header, severityBlock, section("Detalle del registro"), details, note);
 }
 
 function showError(message) {
   setStatus("Error", "error");
-  panelEl.replaceChildren();
+  detailViewEl.replaceChildren();
   const box = document.createElement("p");
   box.className = "placeholder error";
   box.textContent = message;
-  panelEl.append(box);
+  detailViewEl.append(box);
+}
+
+function setView(view, updateHash = true) {
+  tabEls.forEach((tab) => {
+    const active = tab.dataset.view === view;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-selected", String(active));
+  });
+  document.querySelectorAll("[data-nav]").forEach((link) => {
+    link.classList.toggle("is-active", link.dataset.nav === view);
+  });
+  detailViewEl.hidden = view !== "detail";
+  summaryViewEl.hidden = view !== "summary";
+  if (updateHash) {
+    const url =
+      view === "summary"
+        ? "#resumen"
+        : `${window.location.pathname}${window.location.search}`;
+    window.history.replaceState(null, "", url);
+  }
+}
+
+function numericText(value) {
+  return Number(value).toLocaleString("es-MX");
+}
+
+function sortCaret(direction) {
+  const caret = document.createElement("span");
+  caret.className = "sort-caret";
+  caret.textContent = direction === -1 ? " ▼" : " ▲";
+  return caret;
+}
+
+function tableCell(value, numeric) {
+  const cell = document.createElement("td");
+  if (numeric) cell.className = "num";
+  cell.textContent = numeric ? numericText(value) : String(value);
+  return cell;
+}
+
+function stateCell(row) {
+  const cell = document.createElement("td");
+  const link = document.createElement("a");
+  link.className = "table-link";
+  link.href = `/heatmap/${row.state_slug}`;
+  link.textContent = row.state_name;
+  cell.append(link);
+  return cell;
+}
+
+function summaryTotals(rows) {
+  return rows.reduce(
+    (acc, row) => ({
+      accidents: acc.accidents + row.accidents,
+      deaths: acc.deaths + row.deaths,
+      injured: acc.injured + row.injured,
+    }),
+    { accidents: 0, deaths: 0, injured: 0 },
+  );
+}
+
+function sortedSummaryRows(rows) {
+  const { sortKey, sortDir } = summaryState;
+  return [...rows].sort((left, right) => {
+    if (typeof left[sortKey] === "string") {
+      return left[sortKey].localeCompare(right[sortKey], "es") * sortDir;
+    }
+    return (left[sortKey] - right[sortKey]) * sortDir;
+  });
+}
+
+function renderSummary() {
+  const filtered =
+    summaryState.year === "all"
+      ? summaryState.rows
+      : summaryState.rows.filter((row) => row.year === Number(summaryState.year));
+  const rows = sortedSummaryRows(filtered);
+
+  summaryTableEl.replaceChildren();
+
+  const table = document.createElement("table");
+  table.className = "summary-table";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  SUMMARY_COLUMNS.forEach((column) => {
+    const th = document.createElement("th");
+    th.scope = "col";
+    th.textContent = column.label;
+    if (column.numeric) th.classList.add("num");
+    if (summaryState.sortKey === column.key) {
+      th.dataset.sorted = summaryState.sortDir === -1 ? "desc" : "asc";
+      th.append(sortCaret(summaryState.sortDir));
+    }
+    th.addEventListener("click", () => {
+      if (summaryState.sortKey === column.key) {
+        summaryState.sortDir *= -1;
+      } else {
+        summaryState.sortKey = column.key;
+        summaryState.sortDir = column.numeric ? -1 : 1;
+      }
+      renderSummary();
+    });
+    headRow.append(th);
+  });
+  thead.append(headRow);
+
+  const tbody = document.createElement("tbody");
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.append(
+      stateCell(row),
+      tableCell(row.year, true),
+      tableCell(row.accidents, true),
+      tableCell(row.deaths, true),
+      tableCell(row.injured, true),
+    );
+    tbody.append(tr);
+  });
+
+  const totals = summaryTotals(filtered);
+  const tfoot = document.createElement("tfoot");
+  const totalsRow = document.createElement("tr");
+  totalsRow.append(
+    tableCell("Total", false),
+    tableCell("", true),
+    tableCell(totals.accidents, true),
+    tableCell(totals.deaths, true),
+    tableCell(totals.injured, true),
+  );
+  tfoot.append(totalsRow);
+
+  table.append(thead, tbody, tfoot);
+  summaryTableEl.append(table);
+
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "placeholder";
+    empty.textContent = "Sin registros para el filtro seleccionado.";
+    summaryTableEl.append(empty);
+  }
+}
+
+function fillYearFilter(years) {
+  const all = document.createElement("option");
+  all.value = "all";
+  all.textContent = "Todos";
+  yearFilterEl.replaceChildren(all);
+  years.forEach((year) => {
+    const option = document.createElement("option");
+    option.value = String(year);
+    option.textContent = String(year);
+    yearFilterEl.append(option);
+  });
+  yearFilterEl.value = summaryState.year;
+}
+
+async function loadSummary() {
+  try {
+    const response = await fetch("/api/summary");
+    if (!response.ok) {
+      throw new Error(`La API respondió ${response.status}`);
+    }
+    const data = await response.json();
+    summaryState.rows = data.rows;
+    fillYearFilter(data.years);
+    renderSummary();
+  } catch (error) {
+    summaryTableEl.replaceChildren();
+    const box = document.createElement("p");
+    box.className = "placeholder error";
+    box.textContent = `No se pudo cargar el resumen: ${error.message}`;
+    summaryTableEl.append(box);
+  }
 }
 
 async function load() {
@@ -163,4 +356,18 @@ async function load() {
   }
 }
 
+tabEls.forEach((tab) => tab.addEventListener("click", () => setView(tab.dataset.view)));
+document.querySelectorAll("[data-nav]").forEach((link) => {
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    setView(link.dataset.nav);
+  });
+});
+yearFilterEl.addEventListener("change", () => {
+  summaryState.year = yearFilterEl.value;
+  renderSummary();
+});
+
 load();
+loadSummary();
+setView(window.location.hash === "#resumen" ? "summary" : "detail", false);
