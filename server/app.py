@@ -1,22 +1,15 @@
-import csv
 import unicodedata
+from contextlib import contextmanager
 from datetime import datetime
-from functools import lru_cache
 from pathlib import Path
 
+import duckdb
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).resolve().parents[1]
-CSV_PATH = (
-    ROOT.parent
-    / "data"
-    / "ATUS_2020"
-    / "conjunto_de_datos"
-    / "BASE MUNICIPAL_ACCIDENTES DE TRANSITO GEORREFERENCIADOS_2020.csv"
-)
-CSV_ENCODING = "latin-1"
+DB_PATH = ROOT / "data" / "curated" / "atus.duckdb"
 WEB_DIR = ROOT / "web"
 
 ACCIDENT_TYPE = {
@@ -78,7 +71,7 @@ STATE_NAME = {
     32: "Zacatecas",
 }
 
-app = FastAPI(title="ATUS Crash Explorer", version="0.1.0")
+app = FastAPI(title="ATUS Crash Explorer", version="0.2.0")
 
 
 def _slug(name):
@@ -89,6 +82,20 @@ def _slug(name):
 STATE_SLUG = {_slug(name): code for code, name in STATE_NAME.items()}
 
 
+@contextmanager
+def database():
+    if not DB_PATH.exists():
+        raise HTTPException(
+            status_code=503,
+            detail="Base curada no encontrada. Ejecuta scripts/01, 02 y 03.",
+        )
+    connection = duckdb.connect(str(DB_PATH), read_only=True)
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
 def _resolve_state(value):
     if value is None or value == "":
         return None
@@ -97,134 +104,151 @@ def _resolve_state(value):
     return STATE_SLUG.get(_slug(value))
 
 
-def _int(value):
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+def available_years():
+    with database() as con:
+        rows = con.execute("SELECT DISTINCT year FROM accidents ORDER BY year").fetchall()
+    return [row[0] for row in rows]
 
 
-def _float(value):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _occurred_at(row):
-    year, month = _int(row["ANIO"]), _int(row["MES"])
-    day, hour, minute = _int(row["DIA"]), _int(row["HORA"]), _int(row["MINUTOS"])
+def _occurred_at(year, month, day, hour, minute):
     if None in (year, month, day, hour, minute):
         return None
-    if not (1 <= day <= 31 and 0 <= hour <= 23 and 0 <= minute <= 59 and 1 <= month <= 12):
+    try:
+        return datetime(year, month, day, hour, minute).isoformat(timespec="minutes")
+    except ValueError:
         return None
-    return datetime(year, month, day, hour, minute).isoformat(timespec="minutes")
+
+
+FIRST_ACCIDENT_SQL = """
+    SELECT
+        accident_id, year, month, day, hour, minute, day_of_week,
+        cve_ent, cve_mun, type_code, severity_code,
+        street_1, street_2, highway,
+        deaths_total, injured_total, latitude, longitude
+    FROM accidents
+    WHERE (? IS NULL OR year = ?)
+    ORDER BY
+        has_location DESC,
+        coalesce(month, 99), coalesce(day, 99),
+        coalesce(hour, 99), coalesce(minute, 99),
+        accident_id
+    LIMIT 1
+"""
 
 
 def _build_accident(row):
-    type_code = _int(row["TIPACCID"])
-    severity_code = _int(row["CLASE"])
+    (
+        accident_id,
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        day_of_week,
+        cve_ent,
+        cve_mun,
+        type_code,
+        severity_code,
+        street_1,
+        street_2,
+        highway,
+        deaths,
+        injured,
+        latitude,
+        longitude,
+    ) = row
+
     return {
-        "id": row["ID"],
-        "record_key": f"{row['ANIO']}-{row['EDO']}-{row['MPIO']}-{row['ID']}",
-        "occurred_at": _occurred_at(row),
-        "day_of_week": DAY_OF_WEEK.get(_int(row["DIASEMANA"])),
-        "state_code": _int(row["EDO"]),
-        "municipality_code": _int(row["MPIO"]),
-        "street_1": row["CALLE1"].strip() or None,
-        "street_2": row["CALLE2"].strip() or None,
-        "highway": row["CARRETERA"].strip() or None,
+        "id": accident_id,
+        "year": year,
+        "record_key": accident_id,
+        "occurred_at": _occurred_at(year, month, day, hour, minute),
+        "day_of_week": DAY_OF_WEEK.get(day_of_week),
+        "state_code": cve_ent,
+        "municipality_code": cve_mun,
+        "street_1": street_1,
+        "street_2": street_2,
+        "highway": highway,
         "accident_type_code": type_code,
         "accident_type": ACCIDENT_TYPE.get(type_code),
         "severity_code": severity_code,
         "severity": SEVERITY.get(severity_code),
-        "deaths": _int(row["TOTMUERTOS"]),
-        "injured": _int(row["TOTHERIDOS"]),
-        "latitude": _float(row["LATITUD"]),
-        "longitude": _float(row["LONGITUD"]),
+        "deaths": deaths,
+        "injured": injured,
+        "latitude": latitude,
+        "longitude": longitude,
     }
-
-
-@lru_cache(maxsize=1)
-def first_accident():
-    with CSV_PATH.open(encoding=CSV_ENCODING, newline="") as fh:
-        reader = csv.DictReader(fh)
-        row = next(reader, None)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Dataset is empty")
-    return _build_accident(row)
-
-
-@lru_cache(maxsize=1)
-def row_count():
-    with CSV_PATH.open(encoding=CSV_ENCODING, newline="") as fh:
-        return sum(1 for _ in fh) - 1
-
-
-@lru_cache(maxsize=1)
-def summary_rows():
-    buckets = {}
-    with CSV_PATH.open(encoding=CSV_ENCODING, newline="") as fh:
-        for row in csv.DictReader(fh):
-            year, state = _int(row["ANIO"]), _int(row["EDO"])
-            if year is None or state is None:
-                continue
-            bucket = buckets.setdefault((year, state), {"accidents": 0, "deaths": 0, "injured": 0})
-            bucket["accidents"] += 1
-            bucket["deaths"] += _int(row["TOTMUERTOS"]) or 0
-            bucket["injured"] += _int(row["TOTHERIDOS"]) or 0
-    return [
-        {
-            "year": year,
-            "state_code": state,
-            "state_name": STATE_NAME.get(state, f"Estado {state}"),
-            "state_slug": _slug(STATE_NAME.get(state, f"Estado {state}")),
-            "accidents": values["accidents"],
-            "deaths": values["deaths"],
-            "injured": values["injured"],
-        }
-        for (year, state), values in buckets.items()
-    ]
 
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "source": CSV_PATH.name, "rows": row_count()}
+    with database() as con:
+        total = con.execute("SELECT count(*) FROM accidents").fetchone()[0]
+        counts = dict(
+            con.execute("SELECT year, count(*) FROM accidents GROUP BY year ORDER BY year").fetchall()
+        )
+    return {
+        "status": "ok",
+        "source": DB_PATH.name,
+        "sources": 1,
+        "years": list(counts),
+        "rows": total,
+        "rows_by_year": counts,
+    }
 
 
-@lru_cache(maxsize=8)
-def heat_cells(precision):
-    factor = 10**precision
-    cells = {}
-    with CSV_PATH.open(encoding=CSV_ENCODING, newline="") as fh:
-        for row in csv.DictReader(fh):
-            lat, lng = _float(row["LATITUD"]), _float(row["LONGITUD"])
-            state = _int(row["EDO"])
-            if lat is None or lng is None or state is None:
-                continue
-            if not (-90 <= lat <= 90 and -180 <= lng <= 180):
-                continue
-            key = (state, round(lat * factor) / factor, round(lng * factor) / factor)
-            cells[key] = cells.get(key, 0) + 1
-    return cells
+@app.get("/api/years")
+def years():
+    with database() as con:
+        rows = con.execute(
+            """
+            SELECT year, count(*) AS rows,
+                   sum(CASE WHEN has_location THEN 1 ELSE 0 END) AS located
+            FROM accidents
+            GROUP BY year
+            ORDER BY year
+            """
+        ).fetchall()
+    return {
+        "years": [
+            {"year": year, "rows": row_count, "located": located}
+            for year, row_count, located in rows
+        ],
+        "total": sum(row_count for _, row_count, _ in rows),
+    }
 
 
 @app.get("/api/heatmap")
-def heatmap(state: str | None = None, precision: int = 2):
+def heatmap(state: str | None = None, precision: int = 2, year: int | None = None):
     precision = max(0, min(precision, 4))
     state_code = _resolve_state(state)
     if state is not None and state_code is None:
         raise HTTPException(status_code=404, detail=f"Estado desconocido: {state}")
+    if year is not None and year not in available_years():
+        raise HTTPException(status_code=404, detail=f"Año no disponible: {year}")
 
-    cells = heat_cells(precision)
-    if state_code is not None:
-        cells = {key: count for key, count in cells.items() if key[0] == state_code}
+    with database() as con:
+        rows = con.execute(
+            f"""
+            SELECT round(latitude, {precision}) AS lat,
+                   round(longitude, {precision}) AS lon,
+                   count(*) AS accidents
+            FROM accidents
+            WHERE has_location
+              AND (? IS NULL OR year = ?)
+              AND (? IS NULL OR cve_ent = ?)
+            GROUP BY 1, 2
+            """,
+            [year, year, state_code, state_code],
+        ).fetchall()
 
-    points = [[lat, lng, count] for (_state, lat, lng), count in cells.items()]
+    points = [[lat, lon, count] for lat, lon, count in rows]
     latitudes = [point[0] for point in points]
     longitudes = [point[1] for point in points]
+
     return {
         "precision": precision,
+        "year": year,
         "state": None
         if state_code is None
         else {
@@ -241,82 +265,108 @@ def heatmap(state: str | None = None, precision: int = 2):
     }
 
 
-
 @app.get("/api/summary")
 def summary(year: int | None = None, order: str = "desc"):
-    rows = summary_rows()
-    if year is not None:
-        rows = [row for row in rows if row["year"] == year]
-    rows = sorted(
-        rows,
-        key=lambda row: (row["accidents"], row["deaths"], row["injured"]),
-        reverse=order != "asc",
-    )
+    direction = "ASC" if order == "asc" else "DESC"
+    with database() as con:
+        rows = con.execute(
+            f"""
+            SELECT year, cve_ent, state_name, accidents, deaths, injured
+            FROM mart_year_state
+            WHERE (? IS NULL OR year = ?)
+            ORDER BY accidents {direction}, deaths {direction}, injured {direction}
+            """,
+            [year, year],
+        ).fetchall()
+        years = [row[0] for row in con.execute(
+            "SELECT DISTINCT year FROM mart_year_state ORDER BY year"
+        ).fetchall()]
+
+    result = [
+        {
+            "year": row_year,
+            "state_code": cve_ent,
+            "state_name": state_name,
+            "state_slug": _slug(state_name),
+            "accidents": accidents,
+            "deaths": deaths,
+            "injured": injured,
+        }
+        for row_year, cve_ent, state_name, accidents, deaths, injured in rows
+    ]
+
     return {
-        "years": sorted({row["year"] for row in summary_rows()}),
+        "years": years,
         "totals": {
-            "accidents": sum(row["accidents"] for row in rows),
-            "deaths": sum(row["deaths"] for row in rows),
-            "injured": sum(row["injured"] for row in rows),
+            "accidents": sum(row["accidents"] for row in result),
+            "deaths": sum(row["deaths"] for row in result),
+            "injured": sum(row["injured"] for row in result),
         },
-        "rows": rows,
+        "rows": result,
     }
-
-
-@lru_cache(maxsize=1)
-def temporal_buckets():
-    by_day = {day: {"accidents": 0, "deaths": 0, "injured": 0} for day in DAY_OF_WEEK}
-    by_hour = {hour: {"accidents": 0, "deaths": 0, "injured": 0} for hour in range(24)}
-    by_cell = {}
-    with CSV_PATH.open(encoding=CSV_ENCODING, newline="") as fh:
-        for row in csv.DictReader(fh):
-            day, hour = _int(row["DIASEMANA"]), _int(row["HORA"])
-            if day not in by_day or hour not in by_hour:
-                continue
-            deaths = _int(row["TOTMUERTOS"]) or 0
-            injured = _int(row["TOTHERIDOS"]) or 0
-            for bucket in (by_day[day], by_hour[hour]):
-                bucket["accidents"] += 1
-                bucket["deaths"] += deaths
-                bucket["injured"] += injured
-            cell = by_cell.setdefault((day, hour), {"accidents": 0, "deaths": 0, "injured": 0})
-            cell["accidents"] += 1
-            cell["deaths"] += deaths
-            cell["injured"] += injured
-    return by_day, by_hour, by_cell
 
 
 @app.get("/api/temporal")
-def temporal():
-    by_day, by_hour, by_cell = temporal_buckets()
+def temporal(year: int | None = None):
+    if year is not None and year not in available_years():
+        raise HTTPException(status_code=404, detail=f"Año no disponible: {year}")
+
+    with database() as con:
+        rows = con.execute(
+            """
+            SELECT day_of_week, hour, accidents, deaths, injured
+            FROM mart_temporal
+            WHERE (? IS NULL OR year = ?)
+            """,
+            [year, year],
+        ).fetchall()
+
+    by_day = {day: {"accidents": 0, "deaths": 0, "injured": 0} for day in DAY_OF_WEEK}
+    by_hour = {hour: {"accidents": 0, "deaths": 0, "injured": 0} for hour in range(24)}
+    by_cell = {}
+
+    for day, hour, accidents, deaths, injured in rows:
+        for bucket in (by_day.get(day), by_hour.get(hour)):
+            if bucket is None:
+                continue
+            bucket["accidents"] += accidents
+            bucket["deaths"] += deaths
+            bucket["injured"] += injured
+        cell = by_cell.setdefault((day, hour), {"accidents": 0, "deaths": 0, "injured": 0})
+        cell["accidents"] += accidents
+        cell["deaths"] += deaths
+        cell["injured"] += injured
+
     days = [{"day": day, "name": DAY_OF_WEEK[day], **values} for day, values in sorted(by_day.items())]
     hours = [{"hour": hour, **values} for hour, values in sorted(by_hour.items())]
-    cells = [
-        {"day": day, "hour": hour, **values}
-        for (day, hour), values in sorted(by_cell.items())
-    ]
+    cells = [{"day": day, "hour": hour, **values} for (day, hour), values in sorted(by_cell.items())]
+    totals = {
+        "accidents": sum(day["accidents"] for day in days),
+        "deaths": sum(day["deaths"] for day in days),
+        "injured": sum(day["injured"] for day in days),
+    }
+
     return {
+        "year": year,
         "days": days,
         "hours": hours,
         "cells": cells,
-        "totals": {
-            "accidents": sum(day["accidents"] for day in days),
-            "deaths": sum(day["deaths"] for day in days),
-            "injured": sum(day["injured"] for day in days),
-        },
-        "peak_day": max(days, key=lambda day: day["accidents"]),
-        "peak_hour": max(hours, key=lambda hour: hour["accidents"]),
-        "peak_cell": max(cells, key=lambda cell: cell["accidents"]),
+        "totals": totals,
+        "peak_day": max(days, key=lambda day: day["accidents"]) if totals["accidents"] else None,
+        "peak_hour": max(hours, key=lambda hour: hour["accidents"]) if totals["accidents"] else None,
+        "peak_cell": max(cells, key=lambda cell: cell["accidents"]) if cells else None,
     }
 
 
-
 @app.get("/api/accidents/first")
-def get_first_accident():
-    accident = first_accident()
-    if accident["latitude"] is None or accident["longitude"] is None:
-        raise HTTPException(status_code=422, detail="First record has no usable coordinates")
-    return accident
+def get_first_accident(year: int | None = None):
+    if year is not None and year not in available_years():
+        raise HTTPException(status_code=404, detail=f"Año no disponible: {year}")
+    with database() as con:
+        row = con.execute(FIRST_ACCIDENT_SQL, [year, year]).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Sin registros para el año {year}")
+    return _build_accident(row)
 
 
 @app.get("/heatmap", include_in_schema=False)
