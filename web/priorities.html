@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ATUS · Prioridades</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>ATUS · Prioridades</h1>
+        <p class="subtitle" id="priority-subtitle">Ubicaciones con más muertes y choques</p>
+      </div>
+      <nav class="navbar">
+        <a class="nav-link" href="/">Explorador</a>
+        <a class="nav-link" href="/#resumen">Resumen</a>
+        <a class="nav-link" href="/heatmap">Mapa de calor</a>
+        <a class="nav-link" href="/temporal">Temporal</a>
+        <a class="nav-link is-active" href="/priorities" aria-current="page">Prioridades</a>
+        <a class="nav-link" href="/report">Reporte</a>
+      </nav>
+      <nav class="topbar-actions">
+        <span id="status" class="status" data-state="loading">Cargando…</span>
+      </nav>
+    </header>
+
+    <main class="priority-layout">
+      <div id="priority-map" class="map" aria-label="Mapa de prioridades"></div>
+
+      <aside class="priority-panel">
+        <div class="priority-controls">
+          <label class="summary-label" for="state-filter">Estado</label>
+          <select id="state-filter">
+            <option value="all">Todos</option>
+          </select>
+          <label class="summary-label" for="deaths-filter">Muertes</label>
+          <select id="deaths-filter">
+            <option value="0">Todas</option>
+            <option value="1">1 o más</option>
+            <option value="5">5 o más</option>
+            <option value="10">10 o más</option>
+          </select>
+        </div>
+
+        <div class="priority-legend">
+          <span><i style="background:#dc2626"></i>Peatón</span>
+          <span><i style="background:#f59e0b"></i>Moto</span>
+          <span><i style="background:#16a34a"></i>Bici</span>
+          <span><i style="background:#2563eb"></i>Vehículos</span>
+          <span><i style="background:#92400e"></i>Salida del camino</span>
+        </div>
+
+        <p class="priority-summary" id="priority-summary"></p>
+        <div class="priority-list" id="priority-list"></div>
+
+        <details class="severity-box" open>
+          <summary>Factores asociados a muertes</summary>
+          <div id="severity-list">
+            <p class="placeholder">Cargando…</p>
+          </div>
+          <p class="note">
+            Razón de momios (OR) mayor que 1 significa más probabilidad de que el choque sea fatal.
+            Son asociaciones observadas, no prueba de causalidad.
+          </p>
+        </details>
+      </aside>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="/priorities.js" type="module"></script>
+  </body>
+</html>

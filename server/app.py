@@ -1,3 +1,4 @@
+import math
 import unicodedata
 from contextlib import contextmanager
 from datetime import datetime
@@ -358,6 +359,92 @@ def temporal(year: int | None = None):
     }
 
 
+def _fetch(sql, params=()):
+    try:
+        with database() as con:
+            result = con.execute(sql, list(params))
+            columns = [description[0] for description in result.description]
+            rows = result.fetchall()
+    except duckdb.CatalogException as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Faltan las tablas de análisis. Ejecuta scripts/04, 05 y 06.",
+        ) from error
+    return columns, rows
+
+
+def _json_row(columns, row):
+    return {
+        column: (None if isinstance(value, float) and math.isnan(value) else value)
+        for column, value in zip(columns, row)
+    }
+
+
+@app.get("/api/priorities")
+def priorities(state: str | None = None, min_deaths: int = 0, limit: int = 200):
+    state_code = _resolve_state(state)
+    if state is not None and state_code is None:
+        raise HTTPException(status_code=404, detail=f"Estado desconocido: {state}")
+
+    columns, rows = _fetch("SELECT * FROM analytics_priorities ORDER BY rank")
+    records = [_json_row(columns, row) for row in rows]
+    states = sorted({record["state_name"] for record in records if record["state_name"]})
+
+    if state_code is not None:
+        state_name = STATE_NAME[state_code]
+        records = [record for record in records if record["state_name"] == state_name]
+    if min_deaths:
+        records = [record for record in records if (record["deaths"] or 0) >= min_deaths]
+
+    records = records[: max(1, min(limit, 500))]
+    return {"total": len(records), "states": states, "rows": records}
+
+
+PRIORITIES_CSV = ROOT / "data" / "curated" / "priorities_top100.csv"
+
+
+@app.get("/api/priorities/export")
+def priorities_export():
+    if not PRIORITIES_CSV.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="CSV no encontrado. Ejecuta scripts/06_build_priorities.py.",
+        )
+    return FileResponse(
+        PRIORITIES_CSV,
+        filename=PRIORITIES_CSV.name,
+        media_type="text/csv",
+    )
+
+
+@app.get("/api/hotspots/{hotspot_id}")
+def hotspot(hotspot_id: str):
+    columns, rows = _fetch(
+        "SELECT * FROM analytics_priorities WHERE hotspot_id = ?", [hotspot_id]
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"Prioridad no encontrada: {hotspot_id}")
+    return _json_row(columns, rows[0])
+
+
+@app.get("/api/severity")
+def severity(model: str = "all", include_quality: bool = False):
+    columns, rows = _fetch(
+        """
+        SELECT model, feature, feature_label, odds_ratio, ci_low, ci_high,
+               p_value, observations, sample_fatal_rate, test_auc, quality_flag
+        FROM analytics_severity
+        WHERE model = ?
+        ORDER BY abs(ln(odds_ratio)) DESC
+        """,
+        [model],
+    )
+    records = [_json_row(columns, row) for row in rows]
+    if not include_quality:
+        records = [record for record in records if not record["quality_flag"]]
+    return {"model": model, "rows": records}
+
+
 @app.get("/api/accidents/first")
 def get_first_accident(year: int | None = None):
     if year is not None and year not in available_years():
@@ -384,6 +471,16 @@ def state_heatmap_page(state: str):
 @app.get("/temporal", include_in_schema=False)
 def temporal_page():
     return FileResponse(WEB_DIR / "temporal.html")
+
+
+@app.get("/priorities", include_in_schema=False)
+def priorities_page():
+    return FileResponse(WEB_DIR / "priorities.html")
+
+
+@app.get("/report", include_in_schema=False)
+def priorities_report_page():
+    return FileResponse(WEB_DIR / "priorities-report.html")
 
 
 app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ATUS · Reporte de prioridades (Top 100)</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="/priorities-report.css" />
+  </head>
+  <body>
+    <header class="pbi-header">
+      <div class="pbi-brand">
+        <span class="pbi-brand-mark" aria-hidden="true">▦</span>
+        <div>
+          <h1>Reporte de prioridades · ATUS</h1>
+          <p class="pbi-subtitle" id="report-subtitle">
+            Top 100 de puntos críticos por muertes · priorities_top100.csv
+          </p>
+        </div>
+      </div>
+      <div class="pbi-header-actions">
+        <span id="status" class="pbi-status" data-state="loading">Cargando…</span>
+        <a class="pbi-btn" href="/priorities">Vista de mapa</a>
+        <a class="pbi-btn pbi-btn--primary" href="/api/priorities/export" download>
+          Exportar CSV
+        </a>
+      </div>
+    </header>
+
+    <main class="pbi-canvas">
+      <section class="pbi-slicers" aria-label="Filtros del reporte">
+        <div class="pbi-slicer">
+          <label for="filter-state">Estado</label>
+          <select id="filter-state">
+            <option value="all">Todos</option>
+          </select>
+        </div>
+        <div class="pbi-slicer">
+          <label for="filter-type">Tipo dominante</label>
+          <select id="filter-type">
+            <option value="all">Todos</option>
+          </select>
+        </div>
+        <div class="pbi-slicer">
+          <label for="filter-confidence">Confianza</label>
+          <select id="filter-confidence">
+            <option value="all">Todas</option>
+            <option value="alta">Alta</option>
+            <option value="media">Media</option>
+            <option value="baja">Baja</option>
+          </select>
+        </div>
+        <div class="pbi-slicer pbi-slicer--search">
+          <label for="filter-search">Buscar lugar, municipio o estado</label>
+          <input id="filter-search" type="search" placeholder="Ej. Monterrey, Periférico…" />
+        </div>
+        <button class="pbi-btn" type="button" id="reset-filters">Restablecer</button>
+        <p class="pbi-filter-note" id="filter-note">Leyendo priorities_top100.csv…</p>
+      </section>
+
+      <section class="pbi-kpis" aria-label="Indicadores clave">
+        <article class="pbi-kpi">
+          <p class="pbi-kpi-label">Puntos críticos</p>
+          <p class="pbi-kpi-value" id="kpi-count">—</p>
+          <p class="pbi-kpi-meta" id="kpi-count-meta">de 100 en el archivo</p>
+        </article>
+        <article class="pbi-kpi">
+          <p class="pbi-kpi-label">Muertes acumuladas</p>
+          <p class="pbi-kpi-value" id="kpi-deaths">—</p>
+          <p class="pbi-kpi-meta" id="kpi-deaths-meta">suma de la selección</p>
+        </article>
+        <article class="pbi-kpi">
+          <p class="pbi-kpi-label">Heridos acumulados</p>
+          <p class="pbi-kpi-value" id="kpi-injured">—</p>
+          <p class="pbi-kpi-meta" id="kpi-injured-meta">suma de la selección</p>
+        </article>
+        <article class="pbi-kpi">
+          <p class="pbi-kpi-label">Choques acumulados</p>
+          <p class="pbi-kpi-value" id="kpi-crashes">—</p>
+          <p class="pbi-kpi-meta" id="kpi-crashes-meta">suma de la selección</p>
+        </article>
+        <article class="pbi-kpi">
+          <p class="pbi-kpi-label">Muertes por choque</p>
+          <p class="pbi-kpi-value" id="kpi-rate">—</p>
+          <p class="pbi-kpi-meta">letalidad media ponderada</p>
+        </article>
+      </section>
+
+      <section class="pbi-grid">
+        <article class="pbi-visual">
+          <div class="pbi-visual-head">
+            <h2 class="pbi-visual-title">Ubicación de los puntos críticos</h2>
+            <span class="pbi-visual-hint">Tamaño = muertes · color = confianza</span>
+          </div>
+          <div id="report-map" class="pbi-map" aria-label="Mapa de puntos críticos"></div>
+          <div class="pbi-confidence-legend">
+            <span class="pbi-confidence-item"><i class="pbi-dot" style="background:#d64550"></i>Alta</span>
+            <span class="pbi-confidence-item"><i class="pbi-dot" style="background:#f2c811"></i>Media</span>
+            <span class="pbi-confidence-item"><i class="pbi-dot" style="background:#8a8886"></i>Baja</span>
+          </div>
+        </article>
+
+        <div class="pbi-split">
+          <article class="pbi-visual">
+            <div class="pbi-visual-head">
+              <h2 class="pbi-visual-title">Muertes por estado</h2>
+              <span class="pbi-visual-hint">clic para filtrar</span>
+            </div>
+            <div class="pbi-bars" id="state-bars"></div>
+          </article>
+
+          <article class="pbi-visual">
+            <div class="pbi-visual-head">
+              <h2 class="pbi-visual-title">Fuerza del caso</h2>
+              <span class="pbi-visual-hint">según muertes del punto</span>
+            </div>
+            <div class="pbi-confidence-chips" id="confidence-chips"></div>
+          </article>
+        </div>
+      </section>
+
+      <article class="pbi-visual pbi-visual--table">
+        <div class="pbi-visual-head">
+          <h2 class="pbi-visual-title">Detalle de prioridades</h2>
+          <span class="pbi-visual-hint" id="table-hint">Ordenado por rango · clic en una fila para ubicarla</span>
+        </div>
+        <div class="pbi-table-wrap">
+          <table class="pbi-table">
+            <thead>
+              <tr id="table-head"></tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+        <p class="pbi-footnote">
+          Fuente: INEGI ATUS 2019–2024 · puntos críticos de 300 m separados 600 m ·
+          prioridad ordenada por muertes, heridos y choques.
+        </p>
+      </article>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="/priorities-report.js" type="module"></script>
+  </body>
+</html>
