@@ -9,7 +9,10 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
 }).addTo(map);
 
 const statusEl = document.getElementById("status");
+const subtitleEl = document.getElementById("page-subtitle");
 const detailViewEl = document.getElementById("view-detail");
+const detailContentEl = document.getElementById("detail-content");
+const detailYearEl = document.getElementById("detail-year");
 const summaryViewEl = document.getElementById("view-summary");
 const summaryTableEl = document.getElementById("summary-table");
 const yearFilterEl = document.getElementById("year-filter");
@@ -94,7 +97,7 @@ function buildPopup(accident) {
 }
 
 function renderPanel(accident) {
-  detailViewEl.replaceChildren();
+  detailContentEl.replaceChildren();
 
   const header = document.createElement("div");
   header.className = "panel-header";
@@ -115,6 +118,7 @@ function renderPanel(accident) {
   const details = document.createElement("div");
   details.className = "fields";
   details.append(
+    field("Año", accident.year),
     field("Fecha y hora", formatDateTime(accident) ?? "No especificado"),
     field("Día", accident.day_of_week ?? "No especificado"),
     field("Calle 1", accident.street_1),
@@ -132,18 +136,20 @@ function renderPanel(accident) {
   const note = document.createElement("p");
   note.className = "note";
   note.textContent =
-    "Coordenada geocodificada por INEGI a partir de la dirección (no es GPS). El círculo marca la incertidumbre aproximada.";
+    accident.latitude === null || accident.longitude === null
+      ? "Este registro no tiene coordenadas. La base georreferenciada cubre solo 2019–2024."
+      : "Coordenada geocodificada por INEGI a partir de la dirección (no es GPS). El círculo marca la incertidumbre aproximada.";
 
-  detailViewEl.append(header, severityBlock, section("Detalle del registro"), details, note);
+  detailContentEl.append(header, severityBlock, section("Detalle del registro"), details, note);
 }
 
 function showError(message) {
   setStatus("Error", "error");
-  detailViewEl.replaceChildren();
+  detailContentEl.replaceChildren();
   const box = document.createElement("p");
   box.className = "placeholder error";
   box.textContent = message;
-  detailViewEl.append(box);
+  detailContentEl.append(box);
 }
 
 function setView(view, updateHash = true) {
@@ -157,6 +163,8 @@ function setView(view, updateHash = true) {
   });
   detailViewEl.hidden = view !== "detail";
   summaryViewEl.hidden = view !== "summary";
+  subtitleEl.textContent =
+    view === "summary" ? "Resumen por estado y año" : lastDetailSubtitle;
   if (updateHash) {
     const url =
       view === "summary"
@@ -311,6 +319,7 @@ async function loadSummary() {
     summaryState.rows = data.rows;
     fillYearFilter(data.years);
     renderSummary();
+    setStatus("Listo", "ready");
   } catch (error) {
     summaryTableEl.replaceChildren();
     const box = document.createElement("p");
@@ -320,39 +329,88 @@ async function loadSummary() {
   }
 }
 
-async function load() {
+let currentMarker = null;
+let currentCircle = null;
+let lastDetailSubtitle = "Primer registro de la base municipal georreferenciada";
+
+async function loadFirstAccident(year) {
   try {
-    const response = await fetch("/api/accidents/first");
+    const query = year ? `?year=${encodeURIComponent(year)}` : "";
+    const response = await fetch(`/api/accidents/first${query}`);
     if (!response.ok) {
       throw new Error(`La API respondió ${response.status}`);
     }
     const accident = await response.json();
-    const latlng = [accident.latitude, accident.longitude];
+    const hasLocation =
+      Number.isFinite(accident.latitude) && Number.isFinite(accident.longitude);
 
-    L.circle(latlng, {
-      radius: 50,
-      color: "#ef4444",
-      weight: 1,
-      fillColor: "#ef4444",
-      fillOpacity: 0.12,
-    }).addTo(map);
+    if (currentMarker) {
+      currentMarker.remove();
+      currentMarker = null;
+    }
+    if (currentCircle) {
+      currentCircle.remove();
+      currentCircle = null;
+    }
 
-    const marker = L.circleMarker(latlng, {
-      radius: 9,
-      color: "#7f1d1d",
-      weight: 2,
-      fillColor: "#ef4444",
-      fillOpacity: 0.95,
-    })
-      .addTo(map)
-      .bindPopup(buildPopup(accident));
+    if (hasLocation) {
+      const latlng = [accident.latitude, accident.longitude];
 
-    map.setView(latlng, 17);
-    marker.openPopup();
+      currentCircle = L.circle(latlng, {
+        radius: 50,
+        color: "#ef4444",
+        weight: 1,
+        fillColor: "#ef4444",
+        fillOpacity: 0.12,
+      }).addTo(map);
+
+      currentMarker = L.circleMarker(latlng, {
+        radius: 9,
+        color: "#7f1d1d",
+        weight: 2,
+        fillColor: "#ef4444",
+        fillOpacity: 0.95,
+      })
+        .addTo(map)
+        .bindPopup(buildPopup(accident));
+
+      map.setView(latlng, 17);
+      currentMarker.openPopup();
+    } else {
+      map.setView([23.6, -102.5], 5);
+    }
+
     renderPanel(accident);
+
+    lastDetailSubtitle = `Primer registro de ${accident.year} · Estado ${accident.state_code}, municipio ${accident.municipality_code}`;
+    if (summaryViewEl.hidden) {
+      subtitleEl.textContent = lastDetailSubtitle;
+    }
     setStatus("Registro cargado", "ready");
   } catch (error) {
     showError(`No se pudo cargar el registro: ${error.message}`);
+  }
+}
+
+async function loadYears() {
+  const response = await fetch("/api/years");
+  if (!response.ok) {
+    throw new Error(`La API respondió ${response.status}`);
+  }
+  const data = await response.json();
+  return data.years;
+}
+
+function fillDetailYearFilter(years, selected) {
+  detailYearEl.replaceChildren();
+  years.forEach((year) => {
+    const option = document.createElement("option");
+    option.value = String(year);
+    option.textContent = String(year);
+    detailYearEl.append(option);
+  });
+  if (selected !== undefined) {
+    detailYearEl.value = String(selected);
   }
 }
 
@@ -367,7 +425,31 @@ yearFilterEl.addEventListener("change", () => {
   summaryState.year = yearFilterEl.value;
   renderSummary();
 });
+detailYearEl.addEventListener("change", () => {
+  loadFirstAccident(Number(detailYearEl.value));
+});
 
-load();
-loadSummary();
-setView(window.location.hash === "#resumen" ? "summary" : "detail", false);
+async function init() {
+  loadSummary();
+  setView(window.location.hash === "#resumen" ? "summary" : "detail", false);
+  try {
+    const entries = await loadYears();
+    const years = entries.map((entry) => entry.year);
+    const locatedYears = entries
+      .filter((entry) => entry.located > 0)
+      .map((entry) => entry.year);
+    const latest = locatedYears.length
+      ? Math.max(...locatedYears)
+      : years.length
+        ? Math.max(...years)
+        : null;
+    fillDetailYearFilter(years, latest);
+    if (latest !== null) {
+      await loadFirstAccident(latest);
+    }
+  } catch (error) {
+    showError(`No se pudo cargar la lista de años: ${error.message}`);
+  }
+}
+
+init();

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ATUS 2020 · Mapa de calor</title>
+    <title>ATUS · Mapa de calor</title>
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -15,7 +15,7 @@
   <body>
     <header class="topbar">
       <div>
-        <h1 id="heat-title">ATUS 2020 · Mapa de calor del país</h1>
+        <h1 id="heat-title">ATUS · Mapa de calor del país</h1>
         <p class="subtitle" id="heat-subtitle">Densidad de accidentes georreferenciados</p>
       </div>
       <nav class="navbar">
@@ -25,6 +25,7 @@
         <a class="nav-link" href="/temporal">Temporal</a>
       </nav>
       <nav class="topbar-actions">
+        <select id="year-filter" aria-label="Año"></select>
         <span id="status" class="status" data-state="loading">Cargando…</span>
         <a class="link-button" id="heat-back" href="/heatmap" hidden>País completo</a>
       </nav>

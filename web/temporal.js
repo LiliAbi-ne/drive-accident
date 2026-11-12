@@ -3,6 +3,7 @@ const subtitleEl = document.getElementById("temporal-subtitle");
 const dayBarsEl = document.getElementById("day-bars");
 const hourBarsEl = document.getElementById("hour-bars");
 const matrixEl = document.getElementById("matrix");
+const yearFilterEl = document.getElementById("year-filter");
 
 const DAY_NAME = {
   1: "Lunes",
@@ -14,6 +15,9 @@ const DAY_NAME = {
   7: "Domingo",
 };
 
+let currentYear = null;
+let availableYears = [];
+
 function number(value) {
   return Number(value).toLocaleString("es-MX");
 }
@@ -21,6 +25,42 @@ function number(value) {
 function setStatus(text, state) {
   statusEl.textContent = text;
   statusEl.dataset.state = state;
+}
+
+function currentYearParam() {
+  const value = new URLSearchParams(window.location.search).get("year");
+  return value && /^\d{4}$/.test(value) ? Number(value) : null;
+}
+
+function yearLabel() {
+  if (currentYear) return String(currentYear);
+  if (!availableYears.length) return "todos los años";
+  return `${availableYears[0]}–${availableYears[availableYears.length - 1]}`;
+}
+
+function fillYearFilter() {
+  const all = document.createElement("option");
+  all.value = "all";
+  all.textContent = "Todos los años";
+  yearFilterEl.replaceChildren(all);
+
+  availableYears.forEach((year) => {
+    const option = document.createElement("option");
+    option.value = String(year);
+    option.textContent = String(year);
+    yearFilterEl.append(option);
+  });
+
+  yearFilterEl.value = currentYear ? String(currentYear) : "all";
+}
+
+async function loadYears() {
+  const response = await fetch("/api/years");
+  if (!response.ok) {
+    throw new Error(`La API respondió ${response.status}`);
+  }
+  const data = await response.json();
+  availableYears = data.years.map((entry) => entry.year);
 }
 
 function renderBars(container, items, labelOf, max) {
@@ -96,8 +136,12 @@ function renderMatrix(cells, maxCell) {
 }
 
 async function load() {
+  const params = new URLSearchParams();
+  if (currentYear) params.set("year", String(currentYear));
+  const query = params.toString();
+
   try {
-    const response = await fetch("/api/temporal");
+    const response = await fetch(`/api/temporal${query ? `?${query}` : ""}`);
     if (!response.ok) {
       throw new Error(`La API respondió ${response.status}`);
     }
@@ -110,7 +154,9 @@ async function load() {
     renderBars(hourBarsEl, data.hours, (hour) => `${String(hour.hour).padStart(2, "0")}:00`, maxHour);
     renderMatrix(data.cells, data.peak_cell.accidents);
 
-    subtitleEl.textContent = `${number(data.totals.accidents)} accidentes · pico ${data.peak_day.name} a las ${String(
+    subtitleEl.textContent = `${number(
+      data.totals.accidents,
+    )} accidentes · ${yearLabel()} · pico ${data.peak_day.name} a las ${String(
       data.peak_cell.hour,
     ).padStart(2, "0")}:00 (${number(data.peak_cell.accidents)}) · hora más crítica ${String(
       data.peak_hour.hour,
@@ -123,4 +169,29 @@ async function load() {
   }
 }
 
-load();
+yearFilterEl.addEventListener("change", () => {
+  const value = yearFilterEl.value;
+  const url = new URL(window.location.href);
+  if (value === "all") {
+    url.searchParams.delete("year");
+    currentYear = null;
+  } else {
+    url.searchParams.set("year", value);
+    currentYear = Number(value);
+  }
+  window.history.replaceState(null, "", url);
+  load();
+});
+
+async function init() {
+  currentYear = currentYearParam();
+  try {
+    await loadYears();
+    fillYearFilter();
+  } catch (error) {
+    setStatus("Error", "error");
+  }
+  load();
+}
+
+init();

@@ -8,13 +8,14 @@ const map = L.map("heat-map", { zoomControl: true, preferCanvas: true }).setView
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
   attribution:
-    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · Datos: INEGI ATUS 2020',
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · Datos: INEGI ATUS',
 }).addTo(map);
 
 const statusEl = document.getElementById("status");
 const titleEl = document.getElementById("heat-title");
 const subtitleEl = document.getElementById("heat-subtitle");
 const backEl = document.getElementById("heat-back");
+const yearFilterEl = document.getElementById("year-filter");
 
 const GRADIENT = {
   0.2: "#93c5fd",
@@ -23,6 +24,10 @@ const GRADIENT = {
   0.8: "#f97316",
   1: "#b91c1c",
 };
+
+let currentYear = null;
+let availableYears = [];
+let heatLayer = null;
 
 function setStatus(text, state) {
   statusEl.textContent = text;
@@ -34,15 +39,53 @@ function currentStateParam() {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+function currentYearParam() {
+  const value = new URLSearchParams(window.location.search).get("year");
+  return value && /^\d{4}$/.test(value) ? Number(value) : null;
+}
+
+function yearLabel() {
+  if (currentYear) return String(currentYear);
+  if (!availableYears.length) return "todos los años";
+  return `${availableYears[0]}–${availableYears[availableYears.length - 1]}`;
+}
+
 function number(value) {
   return Number(value).toLocaleString("es-MX");
 }
 
+function fillYearFilter() {
+  const all = document.createElement("option");
+  all.value = "all";
+  all.textContent = "Todos los años";
+  yearFilterEl.replaceChildren(all);
+
+  availableYears.forEach((year) => {
+    const option = document.createElement("option");
+    option.value = String(year);
+    option.textContent = String(year);
+    yearFilterEl.append(option);
+  });
+
+  yearFilterEl.value = currentYear ? String(currentYear) : "all";
+}
+
+async function loadYears() {
+  const response = await fetch("/api/years");
+  if (!response.ok) {
+    throw new Error(`La API respondió ${response.status}`);
+  }
+  const data = await response.json();
+  availableYears = data.years.map((entry) => entry.year);
+}
+
 async function load() {
   const stateParam = currentStateParam();
-  const url = stateParam
-    ? `/api/heatmap?state=${encodeURIComponent(stateParam)}`
-    : "/api/heatmap";
+  const params = new URLSearchParams();
+  if (stateParam) params.set("state", stateParam);
+  if (currentYear) params.set("year", String(currentYear));
+  const query = params.toString();
+  const url = `/api/heatmap${query ? `?${query}` : ""}`;
 
   try {
     const response = await fetch(url);
@@ -53,18 +96,29 @@ async function load() {
     const data = await response.json();
 
     if (data.state) {
-      titleEl.textContent = `ATUS 2020 · Mapa de calor · ${data.state.name}`;
-      document.title = `ATUS 2020 · ${data.state.name}`;
+      titleEl.textContent = `ATUS · Mapa de calor · ${data.state.name}`;
+      document.title = `ATUS · ${data.state.name}`;
       backEl.hidden = false;
+    } else {
+      titleEl.textContent = "ATUS · Mapa de calor del país";
+      document.title = "ATUS · Mapa de calor";
     }
 
-    subtitleEl.textContent = `${number(data.total)} accidentes · ${number(
+    if (!data.total) {
+      if (heatLayer) {
+        heatLayer.remove();
+        heatLayer = null;
+      }
+      subtitleEl.textContent = `Sin coordenadas para ${yearLabel()}. La base georreferenciada cubre 2019–2024.`;
+      setStatus("Sin coordenadas", "ready");
+      return;
+    }
+
+    subtitleEl.textContent = `${number(data.total)} accidentes · ${yearLabel()} · ${number(
       data.cells.length,
     )} celdas de ${data.precision} decimales`;
 
-    const bounds = data.bounds
-      ? L.latLngBounds([data.bounds[0], data.bounds[1]])
-      : null;
+    const bounds = data.bounds ? L.latLngBounds([data.bounds[0], data.bounds[1]]) : null;
 
     if (bounds) {
       map.fitBounds(bounds, {
@@ -80,7 +134,8 @@ async function load() {
       Math.log1p(count) / top,
     ]);
 
-    L.heatLayer(points, {
+    if (heatLayer) heatLayer.remove();
+    heatLayer = L.heatLayer(points, {
       radius: data.state ? 24 : 16,
       blur: data.state ? 26 : 20,
       max: 1,
@@ -95,4 +150,29 @@ async function load() {
   }
 }
 
-load();
+yearFilterEl.addEventListener("change", () => {
+  const value = yearFilterEl.value;
+  const url = new URL(window.location.href);
+  if (value === "all") {
+    url.searchParams.delete("year");
+    currentYear = null;
+  } else {
+    url.searchParams.set("year", value);
+    currentYear = Number(value);
+  }
+  window.history.replaceState(null, "", url);
+  load();
+});
+
+async function init() {
+  currentYear = currentYearParam();
+  try {
+    await loadYears();
+    fillYearFilter();
+  } catch (error) {
+    setStatus("Error", "error");
+  }
+  load();
+}
+
+init();

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ATUS 2020 · Explorador de accidentes</title>
+    <title>ATUS · Explorador de accidentes</title>
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -15,8 +15,8 @@
   <body>
     <header class="topbar">
       <div>
-        <h1>ATUS 2020 · Explorador de accidentes</h1>
-        <p class="subtitle">Primer registro de la base municipal georreferenciada</p>
+        <h1>ATUS · Explorador de accidentes</h1>
+        <p class="subtitle" id="page-subtitle">Primer registro de la base municipal georreferenciada</p>
       </div>
       <nav class="navbar">
         <a class="nav-link is-active" href="/" data-nav="detail">Explorador</a>
@@ -43,7 +43,13 @@
         </div>
 
         <section class="view" id="view-detail" role="tabpanel">
-          <p class="placeholder">Leyendo el primer registro del CSV…</p>
+          <div class="summary-controls">
+            <label class="summary-label" for="detail-year">Año</label>
+            <select id="detail-year"></select>
+          </div>
+          <div id="detail-content">
+            <p class="placeholder">Leyendo el primer registro del CSV…</p>
+          </div>
         </section>
 
         <section class="view" id="view-summary" role="tabpanel" hidden>
